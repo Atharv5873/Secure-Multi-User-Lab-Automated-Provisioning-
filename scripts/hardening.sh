@@ -9,6 +9,8 @@
 # and shows pwquality suggestions.
 # Default: dry-run. Use --apply to write files.
 
+set -euo pipefail
+
 APPLY=false
 DRY_RUN=true
 for arg in "$@"; do
