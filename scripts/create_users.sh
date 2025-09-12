@@ -3,22 +3,10 @@
 # Author:        Atharv Sharma
 # Date Created:  13/09/2025
 # Date Modified: 13/09/2025
-
+#
 # Description: 
-# Creates Users from CSV or YAML mainnnfest.
-# Defualt iS DRY-RUN. Use --apply to make changes.
-
-# CSV Format (colon-separated):
-# username:role:shell:extra_group1,extra_group2
-
-# YAML Format (requires yq):
-# users:
-# - username: atharv
-#	role: admin
-#	shell: /bin/bash
-#	extras: [git,build]
-
-# SECURITY: This script has a temporary password for demo only. Do not use in production.
+# Creates Users from CSV or YAML manifest.
+# Default is DRY-RUN. Use --apply to make changes.
 
 set -euo pipefail
 
@@ -27,9 +15,19 @@ APPLY=false
 DRY_RUN=true
 SUDOERS_TEMPLATE=""
 
+# Colors
+RED="\e[31m"
+GREEN="\e[32m"
+YELLOW="\e[33m"
+BLUE="\e[34m"
+CYAN="\e[36m"
+BOLD="\e[1m"
+RESET="\e[0m"
+
 usage() {
 	cat <<EOF
-Usage: sudo $0 --manifest <file> [--apply] [--sudoers <file>]
+${BOLD}Usage:${RESET} sudo $0 --manifest <file> [--apply] [--sudoers <file>]
+
 Options:
   --manifest <file>     CSV or YAML manifest (required)
   --apply               Actually apply changes (default is dry-run)
@@ -45,15 +43,20 @@ while [[ $# -gt 0 ]]; do
 		--apply) APPLY=true; DRY_RUN=false; shift;;
 		--sudoers) SUDOERS_TEMPLATE="$2"; shift 2;;
 		-h|--help) usage;;
-		*) echo "Unknown arg: $1";usage;;
+		*) echo -e "${RED}Unknown arg:${RESET} $1";usage;;
 	esac
 done
 
 if [ -z "$MANIFEST" ]; then usage; fi
 
+section() {
+  echo -e "\n${BOLD}${CYAN}==> $1${RESET}"
+}
+
 require_root() {
 	if [ "$(id -u)" -ne 0 ]; then
-		echo "ERROR: must be run as root (use sudo)"; exit 2
+		echo -e "${RED}ERROR:${RESET} must be run as root (use sudo)"
+		exit 2
 	fi
 }
 
@@ -61,30 +64,30 @@ require_root
 
 saftey_check() {
 	if [ -f /.dockerenv ]; then
-		echo "INFO: running in container"
+		echo -e "${YELLOW}INFO:${RESET} running in container"
 		return
 	fi
 	if grep -qE 'container|lxc|docker' /proc/1/cgroup 2>/dev/null; then
-		echo "INFO: running in container-ish environment"
+		echo -e "${YELLOW}INFO:${RESET} running in container-ish environment"
 		return
 	fi
 	if [ -f /sys/class/dmi/id/product_name ]; then
 		product=$(cat /sys/class/dmi/id/product_name)
 		if echo "$product" | grep -qiE 'vbox|virtualbox|vmware|kvm|qemu'; then
-			echo "INFO: VM product detected: $product"
+			echo -e "${YELLOW}INFO:${RESET} VM product detected: $product"
 			return
 		fi
 	fi
-	echo "WARNING: No VM detected. This script is for disposable test VMs. Proceed only if intentional."
+	echo -e "${RED}WARNING:${RESET} No VM detected. This script is for disposable test VMs. Proceed only if intentional."
 }
 
 saftey_check
 
 run(){
 	if $DRY_RUN; then
-		echo "[DRY-RUN] $*"
+		echo -e "[${YELLOW}DRY-RUN${RESET}] $*"
 	else
-		echo "[RUN] $*"
+		echo -e "[${GREEN}RUN${RESET}] $*"
 		eval "$@"
 	fi
 }
@@ -103,13 +106,11 @@ create_user() {
   local extras=$4
   local tmp_pass=$5
 
-  
   add_group_if_missing "$primary_group"
 
   local sup_groups=""
   if [ -n "$extras" ]; then
     sup_groups="$extras"
-    
     IFS=',' read -ra extra_array <<< "$extras"
     for g in "${extra_array[@]}"; do
       add_group_if_missing "$g"
@@ -117,10 +118,11 @@ create_user() {
   fi
 
   if id "$user" &>/dev/null; then
-    echo "User $user exists — updating attributes"
+    echo -e "${BLUE}Updating existing user:${RESET} $user"
     if [ -n "$sup_groups" ]; then run "usermod -aG $sup_groups $user"; fi
     run "usermod -s $shell $user"
   else
+    echo -e "${GREEN}Creating new user:${RESET} $user"
     if [ -n "$sup_groups" ]; then
       run "useradd -m -s $shell -g $primary_group -G $sup_groups $user"
     else
@@ -130,10 +132,9 @@ create_user() {
 
   if [ -n "$tmp_pass" ]; then
     run "echo \"$user:$tmp_pass\" | chpasswd"
-    echo "Note: temporary password set for $user (lab-only)."
+    echo -e "${YELLOW}Note:${RESET} temporary password set for $user (lab-only)."
   fi
 }
-
 
 install_sudoers_snippet() {
   local snippet_content="$1"
@@ -143,21 +144,20 @@ install_sudoers_snippet() {
   echo "$snippet_content" >"$tmpfile"
   if visudo -cf "$tmpfile"; then
     run "install -m 0440 $tmpfile $dest"
-    echo "Installed sudoers snippet to $dest"
+    echo -e "${GREEN}✔ Installed sudoers snippet to${RESET} $dest"
   else
-    echo "ERROR: sudoers snippet validation failed; not installed."
+    echo -e "${RED}ERROR:${RESET} sudoers snippet validation failed; not installed."
     rm -f "$tmpfile"
     exit 3
   fi
   rm -f "$tmpfile"
 }
 
-
-
+section "Reading manifest"
 entries=()
 if [[ "$MANIFEST" =~ \.ya?ml$ ]]; then
   if ! command -v yq >/dev/null 2>&1; then
-    echo "ERROR: YAML manifest requires 'yq' (https://github.com/mikefarah/yq)." >&2
+    echo -e "${RED}ERROR:${RESET} YAML manifest requires 'yq' (https://github.com/mikefarah/yq)." >&2
     exit 4
   fi
   while IFS= read -r line; do entries+=("$line"); done < <(yq -r '.users[] | "\(.username):\(.role):\(.shell):\(.extras | join(","))"' "$MANIFEST")
@@ -170,11 +170,9 @@ else
 fi
 
 if [ "${#entries[@]}" -eq 0 ]; then
-  echo "No entries found in manifest."
+  echo -e "${YELLOW}No entries found in manifest.${RESET}"
   exit 0
 fi
-
-
 
 if [ -z "$SUDOERS_TEMPLATE" ]; then
   read -r -d '' sudoers_snip <<'EOF' || true
@@ -186,8 +184,9 @@ fi
 
 TMP_PASSWORD="temporarypassword" 
 
-echo "Found ${#entries[@]} manifest entries."
+echo -e "${GREEN}✔ Found ${#entries[@]} manifest entries.${RESET}"
 
+section "Processing users"
 for entry in "${entries[@]}"; do
   IFS=':' read -r username role shell extras <<<"$entry"
   username=${username:-}
@@ -196,13 +195,12 @@ for entry in "${entries[@]}"; do
   extras=${extras:-}
 
   if [ -z "$username" ]; then
-    echo "Skipping empty username entry."
+    echo -e "${YELLOW}Skipping empty username entry.${RESET}"
     continue
   fi
 
   primary_group="$role"
-  echo "Processing: $username (role=$role) shell=$shell extras=$extras"
-
+  echo -e "→ ${BOLD}$username${RESET} (role=$role, shell=$shell, extras=$extras)"
   create_user "$username" "$primary_group" "$shell" "$extras" "$TMP_PASSWORD"
 
   if [ "$role" = "admins" ]; then
@@ -210,6 +208,12 @@ for entry in "${entries[@]}"; do
   fi
 done
 
+section "Sudoers setup"
 install_sudoers_snippet "$sudoers_snip"
 
-echo "Finished. If dry-run, no changes were applied. Re-run with --apply to enact changes."
+section "Summary"
+if $DRY_RUN; then
+  echo -e "${YELLOW}Dry-run mode:${RESET} no changes were applied."
+else
+  echo -e "${GREEN}All changes applied successfully.${RESET}"
+fi
