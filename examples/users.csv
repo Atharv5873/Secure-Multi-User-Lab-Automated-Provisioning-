@@ -1,0 +1,5 @@
+# username:role:shell:extra_groups
+alice:admins:/bin/bash:git,build
+bob:devs:/bin/bash:developers
+carol:auditors:/bin/bash:
+dave:builders:/bin/bash:builders

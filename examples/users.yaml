@@ -1,0 +1,13 @@
+users:
+  - username: user1
+    role: admins
+    shell: /bin/bash
+    extras: [git,build]
+  - username: user2
+    role: devs
+    shell: /bin/bash
+    extras: [developers]
+  - username: user3
+    role: auditors
+    shell: /bin/bash
+    extras: []
